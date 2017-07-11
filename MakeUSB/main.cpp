@@ -5,7 +5,7 @@
 #include <string>
 #include <Wbemidl.h>
 #include <atlbase.h>
-//#pragma comment(lib, "wbemuuid.lib")
+
 #pragma comment(lib, "wbemuuid.lib")
 
 typedef struct _volume_desc_t {
