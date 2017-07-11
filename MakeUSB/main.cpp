@@ -25,7 +25,7 @@ void PrintUsage( void )
 			 L" -h   Print help info \n" );
 }
 
-BOOL CollectRemovableVolumes( IWbemServices* pServices, std::vector<volume_desc_t>& volumes )
+BOOL ScanRemovableVolumes( IWbemServices* pServices, std::vector<volume_desc_t>& volumes )
 {
 	HRESULT hr;
 	CIMTYPE cType;
@@ -244,15 +244,17 @@ int wmain( int argc, wchar_t *argv[] )
 		}
 
 		wprintf( L"Choose a destination from the list below: \n" );
-		if (!CollectRemovableVolumes( pWbemSvc, vVols ))
+		if (!ScanRemovableVolumes( pWbemSvc, vVols ))
 		{
-			wprintf( L"Failed to scan for removeable devices! \n" );
+			wprintf( L"Failed to scan for removeable devices! \nPress any key to exit..." );
+			getchar( );
 			return -1;
 		}
 
 		if (vVols.empty( ))
 		{
-			wprintf( L"No removable volumes found, aborting... \n" );
+			wprintf( L"No removable volumes found, aborting... \nPress any key to exit..." );
+			getchar( );
 			return -1;
 		}
 
@@ -398,6 +400,10 @@ int wmain( int argc, wchar_t *argv[] )
 				CloseHandle( hdest );
 		}
 	}
+
+	wprintf( L"Press any key to exit..." );
+	getchar( );
+	getchar( );
 
 	return rc;
 }
