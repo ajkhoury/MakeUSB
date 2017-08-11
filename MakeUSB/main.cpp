@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <tchar.h>
 #include <iostream>
+#include <algorithm>
 #include <vector>
 #include <string>
 #include <Wbemidl.h>
@@ -36,17 +37,16 @@ BOOL ScanRemovableVolumes( IWbemServices* pServices, std::vector<volume_desc_t>&
 	CComBSTR bstrQuery( L"SELECT * FROM Win32_Volume WHERE DriveType=2" );
 
 	hr = pServices->ExecQuery( bstrWql, bstrQuery, WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY, NULL, (IEnumWbemClassObject**)&pEnumerator );
-	if (hr >= 0)
+	if (SUCCEEDED( hr ))
 	{
 		ULONG uReturn;
 
 		VOLUME_DISK_EXTENTS diskExtents;
 		wchar_t wszVolNum[24];
-		std::wstring wstrPhysicalDrive( L"\\\\.\\PhysicalDrive" );
+		std::wstring wstrPhysicalDrive;
 
 		BOOL ret = FALSE;
 		HANDLE hvol = INVALID_HANDLE_VALUE;
-		DWORD dwBytesReturned = 0;
 		DWORD dwBytesNeeded = 0;
 
 		volume_desc_t volumeDesc;
@@ -57,13 +57,16 @@ BOOL ScanRemovableVolumes( IWbemServices* pServices, std::vector<volume_desc_t>&
 			CComVariant vDeviceID;
 			CComVariant vDriveLetter;
 
+			hvol = INVALID_HANDLE_VALUE;
+
 			hr = pEnumerator->Next( WBEM_INFINITE, 1, &pclsObj, &uReturn );
 			if (FAILED( hr ))
 			{
-				wprintf( L"Failed to enumerate volumes. Error %d \n", hr );
+				wprintf( L"Failed to enumerate volumes. Error %X \n", hr );
 				goto fail;
 			}
 
+			// We are done
 			if (uReturn == 0)
 				break;
 
@@ -99,35 +102,29 @@ BOOL ScanRemovableVolumes( IWbemServices* pServices, std::vector<volume_desc_t>&
 			}
 			else
 			{
-				wprintf( L"Error: WMI DriveLetter is not a BSTR (%d) \n", E_UNEXPECTED );
-				goto fail;
+				if (vDriveLetter.vt == VT_NULL)
+				{
+					wprintf( L"WARNING: Drive %s is not assigned a drive letter! \n", volumeDesc.id.c_str( ) );
+				}
+				else
+				{
+					wprintf( L"Error: WMI DriveLetter type is invalid (%d) \n", vDriveLetter.vt );
+					goto fail;
+				}
 			}
 
 			hvol = CreateFileW(
 				volumeDesc.id.c_str( ),
-				GENERIC_READ | GENERIC_WRITE,
-				0, NULL,
+				GENERIC_WRITE,
+				FILE_SHARE_WRITE, 
+				NULL,
 				OPEN_EXISTING,
-				FILE_ATTRIBUTE_NORMAL,
+				0,
 				NULL
 			);
 			if (hvol == INVALID_HANDLE_VALUE)
 			{
-				wprintf( L"CreateFile failed to open Volume %s \n", volumeDesc.id.c_str( ) );
-				goto fail;
-			}
-
-			ret = DeviceIoControl( hvol, FSCTL_LOCK_VOLUME, NULL, 0, NULL, 0, &dwBytesReturned, NULL );
-			if (!ret)
-			{
-				wprintf( L"Failed to lock Volume %s \n", volumeDesc.id.c_str( ) );
-				goto fail;
-			}
-
-			ret = DeviceIoControl( hvol, FSCTL_DISMOUNT_VOLUME, NULL, 0, NULL, 0, &dwBytesReturned, NULL );
-			if (!ret)
-			{
-				wprintf( L"Failed to dismount Volume %s \n", volumeDesc.id.c_str( ) );
+				wprintf( L"CreateFile failed to open Volume %s - Error = 0x%X \n", volumeDesc.id.c_str( ), GetLastError( ) );
 				goto fail;
 			}
 
@@ -144,22 +141,28 @@ BOOL ScanRemovableVolumes( IWbemServices* pServices, std::vector<volume_desc_t>&
 				goto fail;
 			}
 
+			bool duplicate = false;
+			for (auto curVolume : volumes)
+			{
+				if (curVolume.physicalDriveNum == diskExtents.Extents[0].DiskNumber)
+				{
+					duplicate = true;
+					break;
+				}
+			}
+			if (duplicate)
+				continue;
+
 			wprintf( L"DiskNumber = %u\n", diskExtents.Extents[0].DiskNumber );
 
 			_ultow_s( diskExtents.Extents[0].DiskNumber, wszVolNum, _ARRAYSIZE( wszVolNum ), 10 );
+			wstrPhysicalDrive.assign( L"\\\\.\\PhysicalDrive" );
 			wstrPhysicalDrive += wszVolNum;
 
 			volumeDesc.physicalDriveStr = wstrPhysicalDrive;
 			volumeDesc.physicalDriveNum = diskExtents.Extents[0].DiskNumber;
 
 			wprintf( L"  %s -> %s => %s => %s \n", wszVolNum, volumeDesc.letter.c_str( ), volumeDesc.physicalDriveStr.c_str( ), volumeDesc.id.c_str( ) );
-
-			ret = DeviceIoControl( hvol, FSCTL_UNLOCK_VOLUME, NULL, 0, NULL, 0, &dwBytesReturned, NULL );
-			if (!ret)
-			{
-				wprintf( L"Failed to get Volume disk extents %s \n", volumeDesc.id.c_str( ) );
-				goto fail;
-			}
 
 			CloseHandle( hvol );
 
@@ -173,6 +176,10 @@ BOOL ScanRemovableVolumes( IWbemServices* pServices, std::vector<volume_desc_t>&
 		retval = FALSE;
 		if (hvol != INVALID_HANDLE_VALUE)
 			CloseHandle( hvol );
+	}
+	else
+	{
+		wprintf( L"ExecQuery failed with error %X \n", hr );
 	}
 
 done:
@@ -288,16 +295,18 @@ int wmain( int argc, wchar_t *argv[] )
 		
 		hvol = CreateFileW(
 			destVolumeId.c_str( ),
-			GENERIC_READ | GENERIC_WRITE,
-			0, NULL,
+			GENERIC_WRITE,
+			FILE_SHARE_WRITE, 
+			NULL,
 			OPEN_EXISTING,
-			FILE_ATTRIBUTE_NORMAL,
+			0,
 			NULL
 		);
+
 		if (hvol == INVALID_HANDLE_VALUE)
 		{
 			rc++;
-			wprintf( L"CreateFile failed to open Volume %s \n", destVolumeId.c_str( ) );
+			wprintf( L"CreateFile failed to open Volume %s - Error = 0x%X \n", destVolumeId.c_str( ), GetLastError( ) );
 			goto finished;
 		}
 
@@ -335,15 +344,17 @@ int wmain( int argc, wchar_t *argv[] )
 		
 		hdest = CreateFileW(
 			destPhysicalDrive.c_str( ),
-			GENERIC_READ | GENERIC_WRITE,
-			0, NULL,
-			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+			GENERIC_WRITE,
+			FILE_SHARE_WRITE,
+			NULL,
+			OPEN_EXISTING, 
+			FILE_ATTRIBUTE_DEVICE,
 			NULL
 		);
 		if (hdest == INVALID_HANDLE_VALUE)
 		{
 			rc++;
-			wprintf( L"CreateFile failed to open target destination %s \n", destPhysicalDrive.c_str( ) );
+			wprintf( L"CreateFile failed to open target destination %s - ERROR 0x%08X \n", destPhysicalDrive.c_str( ), GetLastError( ) );
 			goto finished;
 		}
 
