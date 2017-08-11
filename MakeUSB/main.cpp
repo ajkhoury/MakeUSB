@@ -7,6 +7,8 @@
 #include <Wbemidl.h>
 #include <atlbase.h>
 
+#include "strutils.h"
+
 #pragma comment(lib, "wbemuuid.lib")
 
 typedef struct _volume_desc_t {
@@ -291,6 +293,35 @@ int wmain( int argc, wchar_t *argv[] )
 				wprintf( L"Not a valid destination! \n" );
 			}
 		}
+		
+		bool passed = false;
+
+		wprintf( L"Type the word YES if you agree to OVERWRITE drive %s: ", destPhysicalDrive.c_str( ) );
+		
+		for (;;)
+		{
+			WCHAR wcsCmd[256] = { 0 };
+			ULONG size = getwstr( (unsigned short*)wcsCmd );
+
+			if (size == 3)
+			{
+				if (_wcsicmp( wcsCmd, L"yes" ) == 0)
+				{
+					passed = true;
+					break;
+				}
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		if (!passed)
+		{
+			wprintf( L"Agreement not satisfied. Aborting... \n" );
+			goto finished;
+		}
 
 		
 		hvol = CreateFileW(
@@ -413,7 +444,6 @@ int wmain( int argc, wchar_t *argv[] )
 	}
 
 	wprintf( L"Press any key to exit..." );
-	getchar( );
 	getchar( );
 
 	return rc;
